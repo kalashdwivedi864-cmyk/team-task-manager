@@ -3,7 +3,7 @@
 A full-stack Team Task Manager web application built using React, Flask, SQLite, and JWT Authentication.
 # 🌐 Live Demo
 
-https://team-task-manager-production-09cd.up.railway.app
+https://team-task-manager-production-09cd.up.railway.app/
 
 # ✨ Features
 
