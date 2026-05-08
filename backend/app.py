@@ -1,13 +1,19 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from models import db, User, Project, Task
 import jwt
 import datetime
 import bcrypt
 from functools import wraps
-from datetime import date   # 🔥 overdue fix
+from datetime import date
+import os
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    static_folder="../frontend/build",
+    static_url_path="/"
+)
+
 CORS(app)
 
 # ---------------- CONFIG ----------------
@@ -28,7 +34,13 @@ def token_required(f):
 
         try:
             token = token.split(" ")[1]
-            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+
+            data = jwt.decode(
+                token,
+                app.config["SECRET_KEY"],
+                algorithms=["HS256"]
+            )
+
             current_user = User.query.get(data["user_id"])
 
             if not current_user:
@@ -40,11 +52,6 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
 
     return decorated
-
-# ---------------- ROOT ----------------
-@app.route("/")
-def home():
-    return jsonify({"message": "API Running 🚀"})
 
 # ---------------- SIGNUP ----------------
 @app.route("/signup", methods=["POST"])
@@ -70,7 +77,12 @@ def signup():
 
     hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
 
-    user = User(name=name, email=email, password=hashed, role=role)
+    user = User(
+        name=name,
+        email=email,
+        password=hashed,
+        role=role
+    )
 
     db.session.add(user)
     db.session.commit()
@@ -100,7 +112,9 @@ def login():
         "user_id": user.id,
         "role": user.role,
         "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)
-    }, app.config["SECRET_KEY"], algorithm="HS256")
+    },
+    app.config["SECRET_KEY"],
+    algorithm="HS256")
 
     return jsonify({
         "token": token,
@@ -116,33 +130,42 @@ def login():
 @app.route("/users", methods=["GET"])
 @token_required
 def users(current_user):
+
     if current_user.role != "admin":
         return jsonify({"message": "Admin only"}), 403
 
     users = User.query.all()
 
-    return jsonify([{
-        "id": u.id,
-        "name": u.name,
-        "email": u.email,
-        "role": u.role
-    } for u in users])
+    return jsonify([
+        {
+            "id": u.id,
+            "name": u.name,
+            "email": u.email,
+            "role": u.role
+        }
+        for u in users
+    ])
 
 # ---------------- PROJECTS ----------------
 @app.route("/projects", methods=["GET"])
 @token_required
 def get_projects(current_user):
+
     projects = Project.query.all()
 
-    return jsonify([{
-        "id": p.id,
-        "name": p.name,
-        "description": p.description
-    } for p in projects])
+    return jsonify([
+        {
+            "id": p.id,
+            "name": p.name,
+            "description": p.description
+        }
+        for p in projects
+    ])
 
 @app.route("/projects", methods=["POST"])
 @token_required
 def create_project(current_user):
+
     if current_user.role != "admin":
         return jsonify({"message": "Admin only"}), 403
 
@@ -166,29 +189,40 @@ def create_project(current_user):
 @app.route("/tasks", methods=["GET"])
 @token_required
 def get_tasks(current_user):
+
     if current_user.role == "admin":
         tasks = Task.query.all()
     else:
-        tasks = Task.query.filter_by(assigned_to=current_user.id).all()
+        tasks = Task.query.filter_by(
+            assigned_to=current_user.id
+        ).all()
 
-    return jsonify([{
-        "id": t.id,
-        "title": t.title,
-        "status": t.status,
-        "due_date": t.due_date,
-        "project_id": t.project_id,
-        "assigned_to": t.assigned_to
-    } for t in tasks])
+    return jsonify([
+        {
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "due_date": t.due_date,
+            "project_id": t.project_id,
+            "assigned_to": t.assigned_to
+        }
+        for t in tasks
+    ])
 
 @app.route("/tasks", methods=["POST"])
 @token_required
 def create_task(current_user):
+
     if current_user.role != "admin":
         return jsonify({"message": "Admin only"}), 403
 
     data = request.json
 
-    if not data.get("title") or not data.get("project_id") or not data.get("assigned_to"):
+    if (
+        not data.get("title")
+        or not data.get("project_id")
+        or not data.get("assigned_to")
+    ):
         return jsonify({"message": "Missing required fields"}), 400
 
     task = Task(
@@ -205,23 +239,33 @@ def create_task(current_user):
 
     return jsonify({"message": "Task created"}), 201
 
+# ---------------- UPDATE STATUS ----------------
 @app.route("/tasks/<int:id>/status", methods=["PUT"])
 @token_required
 def update_status(current_user, id):
+
     task = Task.query.get(id)
 
     if not task:
         return jsonify({"message": "Task not found"}), 404
 
-    if current_user.role != "admin" and task.assigned_to != current_user.id:
+    if (
+        current_user.role != "admin"
+        and task.assigned_to != current_user.id
+    ):
         return jsonify({"message": "Not allowed"}), 403
 
     status = request.json.get("status")
 
-    if status not in ["pending", "in-progress", "completed"]:
+    if status not in [
+        "pending",
+        "in-progress",
+        "completed"
+    ]:
         return jsonify({"message": "Invalid status"}), 400
 
     task.status = status
+
     db.session.commit()
 
     return jsonify({"message": "Status updated"})
@@ -230,17 +274,31 @@ def update_status(current_user, id):
 @app.route("/dashboard", methods=["GET"])
 @token_required
 def dashboard(current_user):
+
     if current_user.role == "admin":
         tasks = Task.query.all()
     else:
-        tasks = Task.query.filter_by(assigned_to=current_user.id).all()
+        tasks = Task.query.filter_by(
+            assigned_to=current_user.id
+        ).all()
 
     total = len(tasks)
-    pending = len([t for t in tasks if t.status == "pending"])
-    in_progress = len([t for t in tasks if t.status == "in-progress"])
-    completed = len([t for t in tasks if t.status == "completed"])
 
-    # 🔥 OVERDUE LOGIC
+    pending = len([
+        t for t in tasks
+        if t.status == "pending"
+    ])
+
+    in_progress = len([
+        t for t in tasks
+        if t.status == "in-progress"
+    ])
+
+    completed = len([
+        t for t in tasks
+        if t.status == "completed"
+    ])
+
     overdue = len([
         t for t in tasks
         if t.due_date
@@ -256,8 +314,36 @@ def dashboard(current_user):
         "overdue": overdue
     })
 
+# ---------------- REACT FRONTEND ----------------
+@app.route("/")
+def serve():
+    return send_from_directory(
+        app.static_folder,
+        "index.html"
+    )
+
+@app.route("/<path:path>")
+def static_proxy(path):
+
+    file_path = os.path.join(
+        app.static_folder,
+        path
+    )
+
+    if os.path.exists(file_path):
+        return send_from_directory(
+            app.static_folder,
+            path
+        )
+
+    return send_from_directory(
+        app.static_folder,
+        "index.html"
+    )
+
 # ---------------- RUN ----------------
 if __name__ == "__main__":
+
     with app.app_context():
         db.create_all()
 
