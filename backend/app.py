@@ -1,0 +1,264 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from models import db, User, Project, Task
+import jwt
+import datetime
+import bcrypt
+from functools import wraps
+from datetime import date   # 🔥 overdue fix
+
+app = Flask(__name__)
+CORS(app)
+
+# ---------------- CONFIG ----------------
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///taskmanager.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SECRET_KEY"] = "secret123"
+
+db.init_app(app)
+
+# ---------------- AUTH DECORATOR ----------------
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get("Authorization")
+
+        if not token:
+            return jsonify({"message": "Token missing"}), 401
+
+        try:
+            token = token.split(" ")[1]
+            data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
+            current_user = User.query.get(data["user_id"])
+
+            if not current_user:
+                return jsonify({"message": "User not found"}), 404
+
+        except:
+            return jsonify({"message": "Invalid token"}), 401
+
+        return f(current_user, *args, **kwargs)
+
+    return decorated
+
+# ---------------- ROOT ----------------
+@app.route("/")
+def home():
+    return jsonify({"message": "API Running 🚀"})
+
+# ---------------- SIGNUP ----------------
+@app.route("/signup", methods=["POST"])
+def signup():
+    data = request.json
+
+    name = data.get("name")
+    email = data.get("email")
+    password = data.get("password")
+    role = data.get("role", "member")
+
+    if not name or not email or not password:
+        return jsonify({"message": "All fields required"}), 400
+
+    if len(password) < 6:
+        return jsonify({"message": "Password must be 6+ characters"}), 400
+
+    if role not in ["admin", "member"]:
+        return jsonify({"message": "Invalid role"}), 400
+
+    if User.query.filter_by(email=email).first():
+        return jsonify({"message": "Email already exists"}), 400
+
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+    user = User(name=name, email=email, password=hashed, role=role)
+
+    db.session.add(user)
+    db.session.commit()
+
+    return jsonify({"message": "User created"}), 201
+
+# ---------------- LOGIN ----------------
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.json
+
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return jsonify({"message": "Email & password required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    if not bcrypt.checkpw(password.encode("utf-8"), user.password):
+        return jsonify({"message": "Wrong password"}), 401
+
+    token = jwt.encode({
+        "user_id": user.id,
+        "role": user.role,
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }, app.config["SECRET_KEY"], algorithm="HS256")
+
+    return jsonify({
+        "token": token,
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role
+        }
+    })
+
+# ---------------- USERS ----------------
+@app.route("/users", methods=["GET"])
+@token_required
+def users(current_user):
+    if current_user.role != "admin":
+        return jsonify({"message": "Admin only"}), 403
+
+    users = User.query.all()
+
+    return jsonify([{
+        "id": u.id,
+        "name": u.name,
+        "email": u.email,
+        "role": u.role
+    } for u in users])
+
+# ---------------- PROJECTS ----------------
+@app.route("/projects", methods=["GET"])
+@token_required
+def get_projects(current_user):
+    projects = Project.query.all()
+
+    return jsonify([{
+        "id": p.id,
+        "name": p.name,
+        "description": p.description
+    } for p in projects])
+
+@app.route("/projects", methods=["POST"])
+@token_required
+def create_project(current_user):
+    if current_user.role != "admin":
+        return jsonify({"message": "Admin only"}), 403
+
+    data = request.json
+
+    if not data.get("name"):
+        return jsonify({"message": "Project name required"}), 400
+
+    project = Project(
+        name=data.get("name"),
+        description=data.get("description"),
+        created_by=current_user.id
+    )
+
+    db.session.add(project)
+    db.session.commit()
+
+    return jsonify({"message": "Project created"}), 201
+
+# ---------------- TASKS ----------------
+@app.route("/tasks", methods=["GET"])
+@token_required
+def get_tasks(current_user):
+    if current_user.role == "admin":
+        tasks = Task.query.all()
+    else:
+        tasks = Task.query.filter_by(assigned_to=current_user.id).all()
+
+    return jsonify([{
+        "id": t.id,
+        "title": t.title,
+        "status": t.status,
+        "due_date": t.due_date,
+        "project_id": t.project_id,
+        "assigned_to": t.assigned_to
+    } for t in tasks])
+
+@app.route("/tasks", methods=["POST"])
+@token_required
+def create_task(current_user):
+    if current_user.role != "admin":
+        return jsonify({"message": "Admin only"}), 403
+
+    data = request.json
+
+    if not data.get("title") or not data.get("project_id") or not data.get("assigned_to"):
+        return jsonify({"message": "Missing required fields"}), 400
+
+    task = Task(
+        title=data.get("title"),
+        description=data.get("description"),
+        due_date=data.get("due_date"),
+        project_id=data.get("project_id"),
+        assigned_to=data.get("assigned_to"),
+        created_by=current_user.id
+    )
+
+    db.session.add(task)
+    db.session.commit()
+
+    return jsonify({"message": "Task created"}), 201
+
+@app.route("/tasks/<int:id>/status", methods=["PUT"])
+@token_required
+def update_status(current_user, id):
+    task = Task.query.get(id)
+
+    if not task:
+        return jsonify({"message": "Task not found"}), 404
+
+    if current_user.role != "admin" and task.assigned_to != current_user.id:
+        return jsonify({"message": "Not allowed"}), 403
+
+    status = request.json.get("status")
+
+    if status not in ["pending", "in-progress", "completed"]:
+        return jsonify({"message": "Invalid status"}), 400
+
+    task.status = status
+    db.session.commit()
+
+    return jsonify({"message": "Status updated"})
+
+# ---------------- DASHBOARD ----------------
+@app.route("/dashboard", methods=["GET"])
+@token_required
+def dashboard(current_user):
+    if current_user.role == "admin":
+        tasks = Task.query.all()
+    else:
+        tasks = Task.query.filter_by(assigned_to=current_user.id).all()
+
+    total = len(tasks)
+    pending = len([t for t in tasks if t.status == "pending"])
+    in_progress = len([t for t in tasks if t.status == "in-progress"])
+    completed = len([t for t in tasks if t.status == "completed"])
+
+    # 🔥 OVERDUE LOGIC
+    overdue = len([
+        t for t in tasks
+        if t.due_date
+        and t.status != "completed"
+        and str(t.due_date) < str(date.today())
+    ])
+
+    return jsonify({
+        "total": total,
+        "pending": pending,
+        "in_progress": in_progress,
+        "completed": completed,
+        "overdue": overdue
+    })
+
+# ---------------- RUN ----------------
+if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()
+
+    app.run(debug=True)
