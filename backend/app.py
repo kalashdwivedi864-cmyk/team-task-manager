@@ -10,7 +10,7 @@ import os
 
 app = Flask(
     __name__,
-    static_folder="static",
+    static_folder="../frontend/build",
     static_url_path="/"
 )
 
@@ -375,23 +375,10 @@ def dashboard(current_user):
 @app.route("/<path:path>")
 def serve_react(path):
 
-    static_folder_path = app.static_folder
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
 
-    if (
-        path != ""
-        and os.path.exists(
-            os.path.join(static_folder_path, path)
-        )
-    ):
-        return send_from_directory(
-            static_folder_path,
-            path
-        )
-
-    return send_from_directory(
-        static_folder_path,
-        "index.html"
-    )
+    return send_from_directory(app.static_folder, "index.html")
 
 # ---------------- CREATE DATABASE ----------------
 with app.app_context():
