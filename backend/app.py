@@ -8,9 +8,12 @@ from functools import wraps
 from datetime import date
 import os
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BUILD_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "build"))
+
 app = Flask(
     __name__,
-    static_folder="../frontend/build",
+    static_folder=BUILD_DIR,
     static_url_path="/"
 )
 
