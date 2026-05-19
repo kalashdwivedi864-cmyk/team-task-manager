@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from models import db, User, Project, Task
+from dotenv import load_dotenv
 import jwt
 import datetime
 import bcrypt
@@ -9,6 +10,7 @@ from datetime import date
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 def find_frontend_build_dir():
     candidates = [
@@ -40,28 +42,46 @@ app = Flask(
 )
 
 # ---------------- CORS ----------------
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 # ---------------- CONFIG ----------------
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///taskmanager.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
+    "DATABASE_URL",
+    f"sqlite:///{os.path.join(BASE_DIR, 'taskmanager.db')}"
+)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["SECRET_KEY"] = "supersecretkey123456789"
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "supersecretkey123456789")
+app.config["JSON_SORT_KEYS"] = False
+app.config["DEBUG"] = os.getenv("FLASK_DEBUG", "False").lower() in ["1", "true", "yes"]
 
 db.init_app(app)
+
+def parse_due_date(date_str):
+    if not date_str:
+        return None
+
+    try:
+        return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------- AUTH DECORATOR ----------------
 
 # ---------------- AUTH DECORATOR ----------------
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
 
-        token = request.headers.get("Authorization")
+        auth_header = request.headers.get("Authorization", "")
+        parts = auth_header.split()
 
-        if not token:
-            return jsonify({"message": "Token missing"}), 401
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return jsonify({"message": "Authorization header missing or invalid"}), 401
+
+        token = parts[1]
 
         try:
-            token = token.split(" ")[1]
-
             data = jwt.decode(
                 token,
                 app.config["SECRET_KEY"],
@@ -297,7 +317,7 @@ def create_task(current_user):
     task = Task(
         title=data.get("title"),
         description=data.get("description"),
-        due_date=data.get("due_date"),
+        due_date=data.get("due_date") or None,
         project_id=data.get("project_id"),
         assigned_to=data.get("assigned_to"),
         created_by=current_user.id
@@ -381,9 +401,9 @@ def dashboard(current_user):
     overdue = len([
         t for t in tasks
         if (
-            t.due_date
-            and t.status != "completed"
-            and str(t.due_date) < str(date.today())
+            t.status != "completed"
+            and parse_due_date(t.due_date)
+            and parse_due_date(t.due_date) < date.today()
         )
     ])
 

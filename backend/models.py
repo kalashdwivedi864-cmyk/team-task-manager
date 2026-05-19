@@ -28,7 +28,7 @@ class Task(db.Model):
     title = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text)
     status = db.Column(db.String(30), default="pending")
-    due_date = db.Column(db.String(20), nullable=False)
+    due_date = db.Column(db.String(20), nullable=True)
 
     project_id = db.Column(db.Integer, db.ForeignKey("project.id"), nullable=False)
     assigned_to = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
