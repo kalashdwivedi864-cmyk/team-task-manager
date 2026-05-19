@@ -9,7 +9,29 @@ from datetime import date
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "build"))
+
+def find_frontend_build_dir():
+    candidates = [
+        os.path.join(BASE_DIR, "..", "frontend", "build"),
+        os.path.join(BASE_DIR, "frontend", "build"),
+        os.path.join(BASE_DIR, "build"),
+        os.path.join(BASE_DIR, "static"),
+    ]
+
+    for candidate in candidates:
+        candidate = os.path.abspath(candidate)
+        if os.path.exists(candidate) and os.path.isdir(candidate):
+            return candidate
+
+    return os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "build"))
+
+BUILD_DIR = find_frontend_build_dir()
+
+if not os.path.exists(BUILD_DIR):
+    raise RuntimeError(
+        f"React build directory not found. Checked: {BUILD_DIR}. "
+        "Make sure the frontend build is present and deployed."
+    )
 
 app = Flask(
     __name__,
